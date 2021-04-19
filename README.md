@@ -10,7 +10,7 @@ And using emoji, because why not?
 
 Prerequisites:
 
-* Linux and an x86 or x86-64 processesor
+* Linux and an x86 or x86-64 processor
 * [nasm](https://www.nasm.us/)
 
 Run `make`, which will generate the output binary `snakeasm`
