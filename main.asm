@@ -12,30 +12,33 @@ global snake_start
 %assign STDIN				0
 %assign STDOUT				1
 
+%assign SECOND 1_000_000_000
+%assign WAIT_NANOSECONDS (SECOND / 10)
+
 ;****************************************************************************
-;* data
+;* game data
 ;****************************************************************************
 section .data
-clear db `\033[2J`
-clearlen equ $-clear
-lblpos db `\033[000;000f    `
-lblposlen equ $-lblpos
-direction db FLAG_DIR_STOPPED
-positionx db '000'
-positiony db '000'
-left db 0
-right db 0
-up db 0
-down db 0
+	exiting dd 0
+	positionx dd 10
+	positiony dd 10
+	lblpos db `\033[            `
+	lblposlen equ $-lblpos
+	clear db `\033[2J`
+	clearlen equ $-clear
+	direction db FLAG_DIR_STOPPED
+	left dd 0
+	right dd 0
+	up dd 0
+	down dd 0
 
-timeval:
-	tv_sec  dd 0 
-	tv_usec dd 0 
+	timeval:
+		tv_sec  dd 0 
+		tv_nsec dd 0 
 
 section .bss
-hex_number:				resd	1
-character:				resb	1
-sz resb 4
+	character resb 4
+	sz resb 4
 
 ;****************************************************************************
 ;* snake_start
@@ -52,6 +55,7 @@ clearscreen:
 snake_start:
 	call setup_rawkb
 	call clearscreen
+	call hide_cursor
 
 	mov eax, SYS_IOCTL
 	mov edi, STDOUT
@@ -70,80 +74,214 @@ snake_start:
 	call .display
 	jmp .displayloop
 
+.move_up:
+	mov dword [up], 1
+	mov dword [down], 0
+	mov dword [left], 0
+	mov dword [right], 0
+	ret
+
+.move_down:
+	mov dword [up], 0
+	mov dword [down], 1
+	mov dword [left], 0
+	mov dword [right], 0
+	ret
+
+.move_left:
+	mov dword [up], 0
+	mov dword [down], 0
+	mov dword [left], 2
+	mov dword [right], 0
+	ret
+
+.move_right:
+	mov dword [up], 0
+	mov dword [down], 0
+	mov dword [left], 0
+	mov dword [right], 2
+	ret
+
 .readkey:
 	mov	dword eax, SYS_READ
 	mov	dword ebx, STDIN
 	mov	dword ecx, character
-	mov	dword edx, 1
+	mov	dword edx, 4
 	int	byte  0x80
 
-	mov	byte  bl, [character]
+	mov	dword ebx, [character]
+	mov	byte bl, [character]
 
-	cmp	byte  bl, 0x1B
-	je	near  exit
+	cmp eax, 1
+	jne .not_escape
+
+	cmp	byte [character], `\033`
+	je	near  exit_norestore
+
+.not_escape:
+	cmp	dword ebx, `\033[A` ; arrow up
+	je .move_up
 	
-	;test	byte  bl, 77 ; w
-	;mov up, zf
+	cmp	byte  bl, 119 ; w
+	je .move_up
 
-	;test	byte  bl, 73 ; s
-	;mov down, zf
+	cmp	dword ebx, `\033[B` ; arrow down
+	je .move_down
 
-	;test	byte  bl, 61 ; a
-	;mov left, zf
+	cmp	byte  bl, 115 ; s
+	je .move_down
 
-	;test	byte  bl, 64 ; d
-	;mov right, zf
+	cmp	dword ebx, `\033[D` ; arrow left
+	je .move_left
+
+	cmp	byte  bl, 97 ; a
+	je .move_left
+
+	cmp	dword ebx, `\033[C` ; arrow right
+	je .move_right
+
+	cmp	byte  bl, 100 ; d
+	je .move_right
 
 	ret
 
 .display:
-	;add positionx, right
-	;sub positionx, left
-	;add positiony, down
-	;sub positiony, up
+	mov eax, [right]
+	add [positionx], eax
+	mov eax, [left]
+	sub [positionx], eax
+	mov eax, [down]
+	add [positiony], eax
+	mov eax, [up]
+	sub dword [positiony], eax
 
-	mov eax, SYS_WRITE
-	mov ebx, STDOUT
-	mov ecx, lblpos
-	mov edx, lblposlen
-	int 0x80
+	mov eax, [positiony]
+	mov ebx, [positionx]
+	mov dword ecx, '😃'
+	call near printchar
 
 	; Sleep
-	mov dword [tv_sec], 1
-	mov dword [tv_usec], 0
+	mov dword [tv_sec], 0
+	mov dword [tv_nsec], WAIT_NANOSECONDS
 	mov eax, 162
 	mov ebx, timeval
 	mov ecx, 0
 	int 0x80
 
-	xor	dword ebx, ebx
-	xor	dword ecx, ecx
-	mov	byte  bl, [character]
-	mov	byte  cl, bl
-	cmp	byte  bl, 0x1B
+	mov	eax, [exiting]
+	cmp	eax, 1
 	je	near  exit
-	shr	dword ecx, 4
-	and	byte  bl, 0x0f
-	mov	dword eax, 0x0a680000
-	mov	byte  ah, [.hex_table + ebx]
-	mov	byte  al, [.hex_table + ecx]
-	mov	dword [hex_number], eax
-	mov	dword eax, SYS_WRITE
-	mov	dword ebx, STDOUT
-	mov	dword ecx, hex_number
-	mov	dword edx, 4
-	int	byte  0x80
 	ret
-
-.hex_table:				db	"0123456789abcdef"
 
 ;****************************************************************************
 ;* exit
 ;****************************************************************************
+section .data
+lbldone db "Done!"
+lbldonelen equ $-lbldone
+
 section .text
+exit_norestore:
+	mov dword [exiting], 1
+	mov eax, 1
+	int 0x80
+
 exit:
+	mov eax, 4
+	mov ebx, 1
+	mov ecx, lbldone
+	mov edx, lbldonelen
+	int 0x80
+
+	call show_cursor
+
 	call	near  rawkb_restore
 	xor	dword eax, eax
 	mov	dword ebx, eax
 	inc	dword eax
 	int	byte  0x80
+
+;****************************************************************************
+;* printchar
+;****************************************************************************
+section .data
+tracker db 4
+
+section .text
+printchar:
+	push ecx
+	push ebx
+	mov ebx, lblpos + 2
+	mov [tracker], ebx
+	call printnumber
+
+	mov byte [edx], ';'
+	inc edx
+
+	pop eax
+	mov [tracker], edx
+	call printnumber
+
+	mov byte [edx], 'f'
+
+	pop ecx
+	mov dword [edx + 1], ecx
+	add edx, 5
+	sub edx, lblpos
+
+	mov eax, 4
+	mov ebx, 1
+	mov ecx, lblpos
+	int 0x80
+
+	ret
+
+printnumber:
+	mov ecx, 10         ; divisor
+	xor bx, bx          ; count digits
+
+	divide:
+		xor edx, edx        ; high part = 0
+		div ecx             ; eax = edx:eax/ecx, edx = remainder
+		push dx             ; DL is a digit in range [0..9]
+		inc bx              ; count digits
+		test eax, eax       ; EAX is 0?
+		jnz divide    ; no, continue
+
+		; POP digits from stack in reverse order
+		mov cx, bx          ; number of digits
+		mov edx, [tracker]
+	next_digit:
+		pop ax
+		add al, '0'         ; convert to ASCII
+		mov [edx], al        ; write it to the buffer
+		inc edx
+		loop next_digit
+	ret
+
+;****************************************************************************
+;* cursor
+;****************************************************************************
+section .data
+command_hide_cursor db `\033[?25l`
+command_hide_cursorlen equ $-command_hide_cursor
+
+command_show_cursor db `\033[?25h`
+command_show_cursorlen equ $-command_show_cursor
+
+section .text
+hide_cursor:
+	mov eax, SYS_WRITE
+	mov ebx, STDOUT
+	mov ecx, command_hide_cursor
+	mov edx, command_hide_cursorlen
+	int 0x80
+	ret
+
+show_cursor:
+	mov eax, SYS_WRITE
+	mov ebx, STDOUT
+	mov ecx, command_show_cursor
+	mov edx, command_show_cursorlen
+	int 0x80
+	ret
